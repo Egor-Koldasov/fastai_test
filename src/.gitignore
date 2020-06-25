@@ -1,0 +1,3 @@
+*.pth
+google_images/controllers/*
+datasets/*
