@@ -1,3 +1,5 @@
 *.pth
 google_images/controllers/*
-datasets/*
+datasets
+envs
+.vscode
