@@ -9,6 +9,16 @@ import matplotlib.pyplot as plt
 import numpy
 from typing import Union
 from pathlib import Path
+import math
+from dataclasses import dataclass
+import conv_block_0
+
+
+epochs = 500
+lr = 0.01
+wd = 0.1
+momentum = 0.9
+bs = 2
 
 # class Model0(torch.nn.Module):
 
@@ -26,7 +36,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 fileDir = Path(os.path.dirname(os.path.abspath(__file__)))
 controller_dataset_path = fileDir/".."/".."/"google_images"/"controllers"
 transforms = torchvision.transforms.Compose([
-  torchvision.transforms.RandomCrop(img_size, pad_if_needed=True),
+  torchvision.transforms.CenterCrop(img_size),
   torchvision.transforms.ToTensor(),
   torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
 ])
@@ -40,43 +50,19 @@ training_subset, validation_subset = \
     image_folder_dataset, (training_len, validation_len)
   )
 print(training_subset.dataset.classes)
-def make_data_loader(dataset): return torch.utils.data.DataLoader(dataset, batch_size=16)
+def make_data_loader(dataset): return torch.utils.data.DataLoader(dataset, batch_size=bs)
 training_data_loader = make_data_loader(training_subset)
 data_i = iter(training_data_loader)
 images, classes = next(data_i)
 
-
 # Model
-conv1 = torch.nn.Conv2d(img_channels, 6, 3, padding=1).to(device)
-conv2 = torch.nn.Conv2d(6, 9, 5, padding=2).to(device)
-conv3 = torch.nn.Conv2d(9, 15, 7, padding=3).to(device)
-conv4 = torch.nn.Conv2d(15, 25, 9, padding=4).to(device)
-linear1 = torch.nn.Linear(25 * img_size[0] * img_size[1], 50).to(device)
-linear2 = torch.nn.Linear(50, len(training_subset.dataset.classes)).to(device)
+cb0 = conv_block_0.make(len(training_subset.dataset.classes), img_size)
 criterion = torch.nn.CrossEntropyLoss().to(device)
-
-epochs = 500
-lr = 0.03
-wd = 0.01
 
 # learning
 def predict(data):
-  conv1_out = torch.nn.functional.relu(conv1(data))
-  # print("conv1_out", conv1_out)
-  conv2_out = torch.nn.functional.relu(conv2(conv1_out))
-  # print("conv2_out", conv2_out)
-  conv3_out = torch.nn.functional.relu(conv3(conv2_out))
-  # print("conv3_out", conv3_out)
-  conv4_out = torch.nn.functional.relu(conv4(conv3_out))
-  # print("conv4_out", conv4_out)
-  relu_out_merge = conv4_out.view(-1, linear1.weight.size()[1])
-  linear1_out = linear1(relu_out_merge)
-  # print("linear1_out", linear1_out)
-  relu2_out = torch.nn.functional.relu(linear1_out)
-  # print("relu2_out", relu2_out)
-  linear2_out = linear2(relu2_out)
-  # print("linear2_out", linear2_out)
-  return linear2_out
+  cb0_out = conv_block_0.predict(cb0, data)
+  return cb0_out
 
 def class_loss(pred: torch.Tensor, ideal: torch.Tensor):
   # (c) tensor
@@ -93,28 +79,18 @@ def class_loss(pred: torch.Tensor, ideal: torch.Tensor):
     
 def sum_of_squares(tensor: torch.Tensor): tensor.pow(2).sum()
 
-weight_models = [
-  conv1,
-  conv2,
-  conv3,
-  conv4,
-  linear1,
-  linear2,
-]
-
 def do_one_epoch(data_loader: torch.utils.data.DataLoader, back_propagate=True):
   batch_loss = 0
   item_count = 0
   item_correct = 0
   losses = torch.empty(len(data_loader))
-  # for weight_model in weight_models:
-  #   if weight_model.momented2 == NoValue: weight_model.momented2 = 1
-  #   wd_part = wd * w2
   for batch_i, data in enumerate(data_loader, 0):
     prediction = predict(data[0].to(device))
     prediction_classes = prediction.argmax(dim=1)
     ideal = data[1].to(device)
-    loss = class_loss(prediction, ideal)
+    # loss = class_loss(prediction, ideal)
+    weight_sum = conv_block_0.calc_weights(cb0)
+    loss = criterion(prediction, ideal) * wd * weight_sum
     losses[batch_i] = loss
 
     for (item_i, pred_class) in enumerate(prediction_classes, 0):
@@ -123,22 +99,11 @@ def do_one_epoch(data_loader: torch.utils.data.DataLoader, back_propagate=True):
 
     batch_loss += loss
 
-    # if batch_i % 50 == 0:
-    #   print('prediction: ', prediction, '. ideal: ', ideal)
     if back_propagate:
       loss.backward()
-      w2 = 0.
+      wd_sq = 0.
       with torch.no_grad():
-        for weight_model in weight_models:
-          w2 += weight_model.weight.data.pow(2).sum()
-
-        for weight_model in weight_models:
-          wd_part = wd * w2
-          update = weight_model.weight.grad.data * lr * wd_part
-          weight_model.weight.data.sub_(update)
-          weight_model.zero_grad()
-    # else:
-      # print('prediction: ', prediction, '. ideal: ', ideal)
+        conv_block_0.back_propagate(cb0, lr=lr, momentum=momentum)
   mean_loss = torch.mean(losses)
   return (mean_loss, item_correct / item_count)
 
@@ -190,3 +155,5 @@ print("prediction:", predicted_class_label)
 
   
 do_one_epoch(validation_data_loader, back_propagate=False)
+
+torch.optim.Adam
