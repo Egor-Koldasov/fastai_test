@@ -12,13 +12,14 @@ from pathlib import Path
 import math
 from dataclasses import dataclass
 import conv_block_0
+import fastai.vision as vision
 
 
 epochs = 500
-lr = 0.01
+lr = 0.001
 wd = 0.1
 momentum = 0.9
-bs = 2
+bs = 16
 
 # class Model0(torch.nn.Module):
 
@@ -28,7 +29,7 @@ classes_mock[10] = 1
 
 #params
 img_size = (256, 256)
-img_size = (128, 128)
+#img_size = (128, 128)
 img_channels = 3
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -36,7 +37,11 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 fileDir = Path(os.path.dirname(os.path.abspath(__file__)))
 controller_dataset_path = fileDir/".."/".."/"google_images"/"controllers"
 transforms = torchvision.transforms.Compose([
-  torchvision.transforms.CenterCrop(img_size),
+  torchvision.transforms.RandomCrop(img_size, pad_if_needed=True, padding_mode='reflect'),
+  torchvision.transforms.RandomRotation(180),
+  torchvision.transforms.RandomPerspective(),
+  torchvision.transforms.ColorJitter(),
+  # torchvision.transforms.Pad(padding=5, padding_mode='reflect'),
   torchvision.transforms.ToTensor(),
   torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
 ])
@@ -57,7 +62,11 @@ images, classes = next(data_i)
 
 # Model
 cb0 = conv_block_0.make(len(training_subset.dataset.classes), img_size)
+model = vision.create_cnn_model(vision.models.resnet34, len(training_subset.dataset.classes)).to(device)
+cb0 = model
+
 criterion = torch.nn.CrossEntropyLoss().to(device)
+optimizer = torch.optim.Adam(cb0.parameters(), lr=lr)
 
 # learning
 def predict(data):
@@ -85,12 +94,13 @@ def do_one_epoch(data_loader: torch.utils.data.DataLoader, back_propagate=True):
   item_correct = 0
   losses = torch.empty(len(data_loader))
   for batch_i, data in enumerate(data_loader, 0):
+    optimizer.zero_grad()
     prediction = predict(data[0].to(device))
     prediction_classes = prediction.argmax(dim=1)
     ideal = data[1].to(device)
     # loss = class_loss(prediction, ideal)
-    weight_sum = conv_block_0.calc_weights(cb0)
-    loss = criterion(prediction, ideal) * wd * weight_sum
+    # weight_sum = conv_block_0.calc_weights(cb0)
+    loss = criterion(prediction, ideal)# * wd * weight_sum
     losses[batch_i] = loss
 
     for (item_i, pred_class) in enumerate(prediction_classes, 0):
@@ -101,9 +111,10 @@ def do_one_epoch(data_loader: torch.utils.data.DataLoader, back_propagate=True):
 
     if back_propagate:
       loss.backward()
+      optimizer.step()
       wd_sq = 0.
-      with torch.no_grad():
-        conv_block_0.back_propagate(cb0, lr=lr, momentum=momentum)
+      # with torch.no_grad():
+        # conv_block_0.back_propagate(cb0, lr=lr, momentum=momentum)
   mean_loss = torch.mean(losses)
   return (mean_loss, item_correct / item_count)
 
